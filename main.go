@@ -16,7 +16,8 @@ import (
 )
 
 const (
-	defaultVideoSize = 640
+	defaultVideoSize       = 640
+	voiceMsgRestrictionErr = "Bad Request: VOICE_MESSAGES_FORBIDDEN"
 )
 
 func main() {
@@ -127,7 +128,14 @@ func handleVideo(ctx context.Context, bot *tgbotapi.BotAPI, message *tgbotapi.Me
 	_, err = bot.Send(videoNote)
 	if err != nil {
 		log.Println("Error sending video note:", err)
-		sendErrorMessage(bot, chatID, "Failed to send the processed video. Please try again.")
+
+		if err.Error() == voiceMsgRestrictionErr {
+			log.Println("Permission to send video notes is forbidden.")
+			sendErrorMessage(bot, chatID, "It seems that I don't have permission to send video notes. "+
+				"Please check if you allow sending voice messages in the settings.")
+		} else {
+			sendErrorMessage(bot, chatID, "Failed to send the processed video. Please try again.")
+		}
 	}
 }
 
