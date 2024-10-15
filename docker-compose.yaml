@@ -3,4 +3,7 @@ services:
     build: .
     environment:
       - BOT_TOKEN=${BOT_TOKEN}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+    ports:
+      - "8443:8443"
     restart: always

@@ -26,6 +26,11 @@ func main() {
 		log.Fatal("BOT_TOKEN environment variable is not set")
 	}
 
+	webhookURL := os.Getenv("WEBHOOK_URL")
+	if webhookURL == "" {
+		log.Fatal("WEBHOOK_URL environment variable is not set")
+	}
+
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Panic(err)
@@ -34,10 +39,32 @@ func main() {
 	bot.Debug = true
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	wh, _ := tgbotapi.NewWebhook(webhookURL + botToken)
+	_, err = bot.Request(wh)
+	if err != nil {
+		log.Fatal(err)
+	}
 
-	updates := bot.GetUpdatesChan(u)
+	info, err := bot.GetWebhookInfo()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	if info.LastErrorDate != 0 {
+		log.Printf("Telegram callback failed: %s", info.LastErrorMessage)
+	}
+
+	updates := bot.ListenForWebhook("/" + bot.Token)
+
+	log.Println("Listening for updates via webhook...")
+
+	// Start HTTP server
+	go func() {
+		err := http.ListenAndServe("0.0.0.0:8443", nil)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
