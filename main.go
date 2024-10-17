@@ -20,6 +20,10 @@ const (
 	voiceMsgRestrictionErr = "Bad Request: VOICE_MESSAGES_FORBIDDEN"
 )
 
+func handler(w http.ResponseWriter, r *http.Request) {
+	fmt.Fprintf(w, "Hello, HTTP is working!")
+}
+
 func main() {
 	botToken := os.Getenv("BOT_TOKEN")
 	if botToken == "" {
@@ -58,9 +62,11 @@ func main() {
 
 	log.Println("Listening for updates via webhook...")
 
+	http.HandleFunc("/", handler)
+
 	// Start HTTP server
 	go func() {
-		err := http.ListenAndServe("0.0.0.0:8443", nil)
+		err := http.ListenAndServe(":8443", nil)
 		if err != nil {
 			log.Fatal(err)
 		}
