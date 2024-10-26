@@ -17,7 +17,7 @@ services:
     volumes:
       - ./public.pem:/etc/ssl/certs/public.pem
     ports:
-      - "8080:8080"
+      - "8090:8090"
     depends_on:
       - nginx
     restart: always

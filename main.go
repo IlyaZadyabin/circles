@@ -71,7 +71,7 @@ func main() {
 
 	// Start HTTP server
 	go func() {
-		err := http.ListenAndServe(":8080", nil)
+		err := http.ListenAndServe(":8090", nil)
 		if err != nil {
 			log.Fatal(err)
 		}
