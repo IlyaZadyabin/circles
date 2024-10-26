@@ -35,6 +35,11 @@ func main() {
 		log.Fatal("WEBHOOK_URL environment variable is not set")
 	}
 
+	certPath := os.Getenv("CERT_PATH")
+	if certPath == "" {
+		log.Fatal("CERT_PATH environment variable is not set")
+	}
+
 	bot, err := tgbotapi.NewBotAPI(botToken)
 	if err != nil {
 		log.Panic(err)
@@ -43,7 +48,7 @@ func main() {
 	bot.Debug = true
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	wh, _ := tgbotapi.NewWebhook(webhookURL + botToken)
+	wh, _ := tgbotapi.NewWebhookWithCert(webhookURL+botToken, tgbotapi.FilePath(certPath))
 	_, err = bot.Request(wh)
 	if err != nil {
 		log.Fatal(err)
@@ -66,7 +71,7 @@ func main() {
 
 	// Start HTTP server
 	go func() {
-		err := http.ListenAndServe(":8443", nil)
+		err := http.ListenAndServe(":8080", nil)
 		if err != nil {
 			log.Fatal(err)
 		}
