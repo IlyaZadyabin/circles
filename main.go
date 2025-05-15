@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +12,8 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
 const (
@@ -34,10 +35,40 @@ func main() {
 	bot.Debug = true
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
+	// Delete any existing webhook
+	_, err = bot.Request(tgbotapi.DeleteWebhookConfig{})
+	if err != nil {
+		log.Panic(err)
+	}
 
-	updates := bot.GetUpdatesChan(u)
+	// Set new webhook
+	webhookURL := os.Getenv("WEBHOOK_URL")
+	if webhookURL == "" {
+		log.Fatal("WEBHOOK_URL environment variable is not set")
+	}
+	// Create webhook configuration
+	webhookConfig, err := tgbotapi.NewWebhook(webhookURL)
+	if err != nil {
+		log.Panic(err)
+	}
+	// Register webhook with Telegram
+	_, err = bot.Request(webhookConfig)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	// Start HTTP server for webhook handling
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	go func() {
+		log.Printf("Starting server on port %s", port)
+		log.Fatal(http.ListenAndServe(":"+port, nil))
+	}()
+
+	// Listen for webhook updates instead of polling
+	updates := bot.ListenForWebhook("/webhook")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
