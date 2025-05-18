@@ -5,6 +5,7 @@ services:
       - BOT_TOKEN=${BOT_TOKEN}
       - WEBHOOK_URL=${WEBHOOK_URL}
       - PORT=${PORT:-8080}
+      - WEBHOOK_SECRET_TOKEN=${WEBHOOK_SECRET_TOKEN}
     ports:
       - "${PORT:-8080}:${PORT:-8080}"
     restart: always

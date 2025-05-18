@@ -34,6 +34,8 @@ func main() {
 		log.Fatal("WEBHOOK_URL environment variable is not set")
 	}
 
+	webhookSecret := os.Getenv("WEBHOOK_SECRET_TOKEN")
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -51,12 +53,36 @@ func main() {
 		cancel()
 	}()
 
-	b, err := botpkg.New(botToken, botpkg.WithDefaultHandler(defaultHandler))
+	botOptions := []botpkg.Option{botpkg.WithDefaultHandler(defaultHandler)}
+	if webhookSecret != "" {
+		botOptions = append(botOptions, botpkg.WithWebhookSecretToken(webhookSecret))
+	}
+
+	b, err := botpkg.New(botToken, botOptions...)
 	if err != nil {
 		log.Panic(err)
 	}
 
-	b.Start(ctx)
+	// Set webhook
+	setWebhookParams := &botpkg.SetWebhookParams{
+		URL: webhookURL,
+	}
+	if webhookSecret != "" {
+		setWebhookParams.SecretToken = webhookSecret
+	}
+	_, err = b.SetWebhook(ctx, setWebhookParams)
+	if err != nil {
+		log.Panicf("Failed to set webhook: %v", err)
+	}
+
+	// Start webhook server
+	go b.StartWebhook(ctx)
+
+	log.Printf("Listening for webhook on :%s", port)
+	http.Handle("/webhook", b.WebhookHandler())
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("Failed to start HTTP server: %v", err)
+	}
 }
 
 func defaultHandler(ctx context.Context, b *botpkg.Bot, update *models.Update) {
