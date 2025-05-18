@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +12,9 @@ import (
 	"os/signal"
 	"path/filepath"
 	"syscall"
+
+	botpkg "github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 const (
@@ -26,18 +28,17 @@ func main() {
 		log.Fatal("BOT_TOKEN environment variable is not set")
 	}
 
-	bot, err := tgbotapi.NewBotAPI(botToken)
-	if err != nil {
-		log.Panic(err)
+	webhookURL := os.Getenv("WEBHOOK_URL")
+	if webhookURL == "" {
+		log.Fatal("WEBHOOK_URL environment variable is not set")
 	}
 
-	bot.Debug = true
-	log.Printf("Authorized on account %s", bot.Self.UserName)
+	webhookSecret := os.Getenv("WEBHOOK_SECRET_TOKEN")
 
-	u := tgbotapi.NewUpdate(0)
-	u.Timeout = 60
-
-	updates := bot.GetUpdatesChan(u)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -51,27 +52,54 @@ func main() {
 		cancel()
 	}()
 
-	for {
-		select {
-		case update := <-updates:
-			if update.Message == nil {
-				continue
-			}
+	botOptions := []botpkg.Option{botpkg.WithDefaultHandler(defaultHandler)}
+	if webhookSecret != "" {
+		botOptions = append(botOptions, botpkg.WithWebhookSecretToken(webhookSecret))
+	}
 
-			if update.Message.Video != nil || update.Message.Document != nil {
-				go handleVideo(ctx, bot, update.Message)
-			} else {
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Please send a video file to make it circular.")
-				bot.Send(msg)
-			}
-		case <-ctx.Done():
-			log.Println("Bot is shutting down...")
-			return
-		}
+	b, err := botpkg.New(botToken, botOptions...)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	// Set webhook
+	setWebhookParams := &botpkg.SetWebhookParams{
+		URL: webhookURL,
+	}
+	if webhookSecret != "" {
+		setWebhookParams.SecretToken = webhookSecret
+	}
+	_, err = b.SetWebhook(ctx, setWebhookParams)
+	if err != nil {
+		log.Panicf("Failed to set webhook: %v", err)
+	}
+
+	// Start webhook server
+	go b.StartWebhook(ctx)
+
+	log.Printf("Listening for webhook on :%s", port)
+	http.Handle("/webhook", b.WebhookHandler())
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatalf("Failed to start HTTP server: %v", err)
 	}
 }
 
-func handleVideo(ctx context.Context, bot *tgbotapi.BotAPI, message *tgbotapi.Message) {
+func defaultHandler(ctx context.Context, b *botpkg.Bot, update *models.Update) {
+	if update.Message == nil {
+		return
+	}
+	if update.Message.Video != nil || update.Message.Document != nil {
+		go handleVideo(ctx, b, update.Message)
+	} else {
+		msg := &botpkg.SendMessageParams{
+			ChatID: update.Message.Chat.ID,
+			Text:   "Please send a video file to make it circular.",
+		}
+		_, _ = b.SendMessage(ctx, msg)
+	}
+}
+
+func handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Message) {
 	chatID := message.Chat.ID
 	var fileID string
 	var fileName string
@@ -83,65 +111,76 @@ func handleVideo(ctx context.Context, bot *tgbotapi.BotAPI, message *tgbotapi.Me
 		fileID = message.Document.FileID
 		fileName = message.Document.FileName
 	} else {
-		sendErrorMessage(bot, chatID, "Please send a valid video file.")
+		sendErrorMessage(ctx, b, chatID, "Please send a valid video file.")
 		return
 	}
 
-	// Ensure fileName is not empty and has a valid extension
 	if fileName == "" {
 		fileName = "video.mp4"
 	} else if filepath.Ext(fileName) == "" {
 		fileName += ".mp4"
 	}
 
-	file, err := bot.GetFile(tgbotapi.FileConfig{FileID: fileID})
+	file, err := b.GetFile(ctx, &botpkg.GetFileParams{FileID: fileID})
 	if err != nil {
 		log.Println("Error getting file:", err)
-		sendErrorMessage(bot, chatID, "Failed to process the video. Please try again.")
+		sendErrorMessage(ctx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 
 	inputPath := filepath.Join(os.TempDir(), fmt.Sprintf("input_%d_%s", chatID, fileName))
 	log.Println("Downloading video to", inputPath)
-	err = downloadFile(bot, file.FilePath, inputPath)
+	err = downloadFile(b, file, inputPath)
 	if err != nil {
 		log.Println("Error downloading file:", err)
-		sendErrorMessage(bot, chatID, "Failed to download the video. Please try again.")
+		sendErrorMessage(ctx, b, chatID, "Failed to download the video. Please try again.")
 		return
 	}
 	defer os.Remove(inputPath)
 
-	sendProgressMessage(bot, chatID, "Video downloaded. Processing...")
+	sendProgressMessage(ctx, b, chatID, "Video downloaded. Processing...")
 
 	outputPath := filepath.Join(os.TempDir(), "output_"+fileName)
 	err = makeCircularVideo(ctx, inputPath, outputPath)
 	if err != nil {
 		log.Println("Error processing video:", err)
-		sendErrorMessage(bot, chatID, "Failed to process the video. Please try again.")
+		sendErrorMessage(ctx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 	defer os.Remove(outputPath)
 
-	sendProgressMessage(bot, chatID, "Video processed. Sending...")
+	sendProgressMessage(ctx, b, chatID, "Video processed. Sending...")
 
-	videoNote := tgbotapi.NewVideoNote(chatID, defaultVideoSize, tgbotapi.FilePath(outputPath))
-	_, err = bot.Send(videoNote)
+	f, err := fileReader(outputPath)
+	if err != nil {
+		log.Println("Error opening output file:", err)
+		sendErrorMessage(ctx, b, chatID, "Failed to open the processed video. Please try again.")
+		return
+	}
+	defer f.Close()
+
+	videoNoteParams := &botpkg.SendVideoNoteParams{
+		ChatID: chatID,
+		VideoNote: &models.InputFileUpload{
+			Filename: fileName,
+			Data:     f,
+		},
+		Length: defaultVideoSize,
+	}
+	_, err = b.SendVideoNote(ctx, videoNoteParams)
 	if err != nil {
 		log.Println("Error sending video note:", err)
-
 		if err.Error() == voiceMsgRestrictionErr {
 			log.Println("Permission to send video notes is forbidden.")
-			sendErrorMessage(bot, chatID, "It seems that I don't have permission to send video notes. "+
-				"Please check if you allow sending voice messages in the settings.")
+			sendErrorMessage(ctx, b, chatID, "It seems that I don't have permission to send video notes. Please check if you allow sending voice messages in the settings.")
 		} else {
-			sendErrorMessage(bot, chatID, "Failed to send the processed video. Please try again.")
+			sendErrorMessage(ctx, b, chatID, "Failed to send the processed video. Please try again.")
 		}
 	}
 }
 
-func downloadFile(bot *tgbotapi.BotAPI, filePath, destPath string) error {
-	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", bot.Token, filePath)
-
+func downloadFile(b *botpkg.Bot, file *models.File, destPath string) error {
+	url := fmt.Sprintf("https://api.telegram.org/file/bot%s/%s", b.Token(), file.FilePath)
 	resp, err := http.Get(url)
 	if err != nil {
 		return err
@@ -189,12 +228,22 @@ func logFFmpegProgress(stderr io.ReadCloser) {
 	}
 }
 
-func sendErrorMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg)
+func sendErrorMessage(ctx context.Context, b *botpkg.Bot, chatID int64, text string) {
+	msg := &botpkg.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}
+	_, _ = b.SendMessage(ctx, msg)
 }
 
-func sendProgressMessage(bot *tgbotapi.BotAPI, chatID int64, text string) {
-	msg := tgbotapi.NewMessage(chatID, text)
-	bot.Send(msg)
+func sendProgressMessage(ctx context.Context, b *botpkg.Bot, chatID int64, text string) {
+	msg := &botpkg.SendMessageParams{
+		ChatID: chatID,
+		Text:   text,
+	}
+	_, _ = b.SendMessage(ctx, msg)
+}
+
+func fileReader(path string) (io.ReadCloser, error) {
+	return os.Open(path)
 }
