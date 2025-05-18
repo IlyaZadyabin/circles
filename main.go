@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -152,11 +151,19 @@ func handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Message) {
 
 	sendProgressMessage(ctx, b, chatID, "Video processed. Sending...")
 
+	f, err := fileReader(outputPath)
+	if err != nil {
+		log.Println("Error opening output file:", err)
+		sendErrorMessage(ctx, b, chatID, "Failed to open the processed video. Please try again.")
+		return
+	}
+	defer f.Close()
+
 	videoNoteParams := &botpkg.SendVideoNoteParams{
 		ChatID: chatID,
 		VideoNote: &models.InputFileUpload{
 			Filename: fileName,
-			Data:     fileReader(outputPath),
+			Data:     f,
 		},
 		Length: defaultVideoSize,
 	}
@@ -237,10 +244,6 @@ func sendProgressMessage(ctx context.Context, b *botpkg.Bot, chatID int64, text 
 	_, _ = b.SendMessage(ctx, msg)
 }
 
-func fileReader(path string) io.Reader {
-	f, err := os.Open(path)
-	if err != nil {
-		return bytes.NewReader(nil)
-	}
-	return f
+func fileReader(path string) (io.ReadCloser, error) {
+	return os.Open(path)
 }
