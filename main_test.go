@@ -151,3 +151,12 @@ func TestTempPathIsUniquePerJob(t *testing.T) {
 		t.Fatalf("two jobs got the same path %s", a)
 	}
 }
+
+func TestFFmpegArgsUseMediumQuality(t *testing.T) {
+	args := strings.Join(ffmpegArgs("in", "out.mp4"), " ")
+	for _, want := range []string{"-preset medium", "-crf 23", "-b:a 128k"} {
+		if !strings.Contains(args, want) {
+			t.Errorf("ffmpeg args %q missing %q", args, want)
+		}
+	}
+}
