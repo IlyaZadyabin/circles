@@ -31,6 +31,7 @@ const (
 	maxDownloadBytes       = 20 << 20
 	voiceMsgRestrictionErr = "VOICE_MESSAGES_FORBIDDEN"
 	shutdownTimeout        = 25 * time.Second
+	jobTimeout             = 3 * time.Minute
 )
 
 type app struct {
@@ -190,24 +191,29 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 
 	in, reply := videoFromMessage(message)
 	if reply != "" {
-		sendText(ctx, b, chatID, reply)
+		sendText(a.jobCtx, b, chatID, reply)
 		return
 	}
 
-	a.workers <- struct{}{}
+	ctx, cancel := context.WithTimeout(ctx, jobTimeout)
+	defer cancel()
+	if !a.acquire(ctx) {
+		sendText(a.jobCtx, b, chatID, "The bot is busy. Please try again in a few minutes.")
+		return
+	}
 	defer func() { <-a.workers }()
 
 	file, err := b.GetFile(ctx, &botpkg.GetFileParams{FileID: in.fileID})
 	if err != nil {
 		log.Println("Error getting file:", err)
-		sendText(ctx, b, chatID, "Failed to process the video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 
 	inputPath, err := tempPath("input_*")
 	if err != nil {
 		log.Println("Error creating temp file:", err)
-		sendText(ctx, b, chatID, "Failed to process the video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 	defer os.Remove(inputPath)
@@ -216,16 +222,16 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 	err = downloadFile(ctx, b.FileDownloadLink(file), inputPath)
 	if err != nil {
 		log.Println("Error downloading file:", err)
-		sendText(ctx, b, chatID, "Failed to download the video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to download the video. Please try again.")
 		return
 	}
 
-	sendText(ctx, b, chatID, "Video downloaded. Processing...")
+	sendText(a.jobCtx, b, chatID, "Video downloaded. Processing...")
 
 	outputPath, err := tempPath("output_*.mp4")
 	if err != nil {
 		log.Println("Error creating temp file:", err)
-		sendText(ctx, b, chatID, "Failed to process the video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 	defer os.Remove(outputPath)
@@ -233,7 +239,7 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 	err = makeCircularVideo(ctx, inputPath, outputPath)
 	if err != nil {
 		log.Println("Error processing video:", err)
-		sendText(ctx, b, chatID, "Failed to process the video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to process the video. Please try again.")
 		return
 	}
 
@@ -245,7 +251,7 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 	f, err := os.Open(outputPath)
 	if err != nil {
 		log.Println("Error opening output file:", err)
-		sendText(ctx, b, chatID, "Failed to open the processed video. Please try again.")
+		sendText(a.jobCtx, b, chatID, "Failed to open the processed video. Please try again.")
 		return
 	}
 	defer f.Close()
@@ -261,9 +267,9 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 	if err != nil {
 		log.Println("Error sending video note:", err)
 		if isVoiceForbidden(err) {
-			sendText(ctx, b, chatID, "It seems that I don't have permission to send video notes. Please check if you allow sending voice messages in the settings.")
+			sendText(a.jobCtx, b, chatID, "It seems that I don't have permission to send video notes. Please check if you allow sending voice messages in the settings.")
 		} else {
-			sendText(ctx, b, chatID, "Failed to send the processed video. Please try again.")
+			sendText(a.jobCtx, b, chatID, "Failed to send the processed video. Please try again.")
 		}
 		return
 	}
@@ -272,6 +278,15 @@ func (a *app) handleVideo(ctx context.Context, b *botpkg.Bot, message *models.Me
 		return
 	}
 	log.Printf("Sent video note to chat %d (%ds)", chatID, sent.VideoNote.Duration)
+}
+
+func (a *app) acquire(ctx context.Context) bool {
+	select {
+	case a.workers <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
 }
 
 func isVoiceForbidden(err error) bool {
