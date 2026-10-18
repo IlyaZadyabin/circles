@@ -120,6 +120,24 @@ func TestWebhookRejectsWrongSecret(t *testing.T) {
 	}
 }
 
+func TestAcquireGivesUpWhenJobDeadlinePasses(t *testing.T) {
+	a := &app{workers: make(chan struct{}, 1)}
+	a.workers <- struct{}{}
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	got := make(chan bool, 1)
+	go func() { got <- a.acquire(ctx) }()
+	select {
+	case ok := <-got:
+		if ok {
+			t.Fatal("acquired a slot that was taken")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("acquire ignored the job deadline")
+	}
+}
+
 func TestTempPathIsUniquePerJob(t *testing.T) {
 	a, err := tempPath("output_*.mp4")
 	if err != nil {
