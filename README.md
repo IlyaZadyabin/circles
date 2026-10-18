@@ -21,3 +21,5 @@ Create a `.env` file in the root directory:
 ### Run the bot locally
 ```sh
 docker-compose up --build
+
+Health check: `GET /healthz` returns 200.
