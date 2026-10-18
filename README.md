@@ -8,10 +8,12 @@ Circles is a Go project that uses the Telegram Bot API to create a bot which con
 
 ## Configuration
 
-Create a `.env` file in the root directory and add your Telegram bot token:
+Create a `.env` file in the root directory:
 
     ```
-    TELEGRAM_BOT_TOKEN=your-telegram-bot-token
+    BOT_TOKEN=your-telegram-bot-token
+    WEBHOOK_URL=https://your-domain/webhook
+    WEBHOOK_SECRET_TOKEN=random-string
     ```
    
 ## Usage

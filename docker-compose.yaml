@@ -9,3 +9,4 @@ services:
     expose:
       - "${PORT:-8080}"
     restart: always
+    stop_grace_period: 30s
