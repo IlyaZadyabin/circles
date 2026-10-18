@@ -1,17 +1,17 @@
-FROM golang:1.23-alpine
+FROM golang:1.23-alpine AS build
 
-RUN apk add --no-cache ffmpeg
-
-WORKDIR /app
-EXPOSE 8080
-ENV PORT 8080
-
+WORKDIR /src
 COPY go.mod go.sum ./
-
 RUN go mod download
-
 COPY . .
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /circles .
 
-RUN go build -o main .
+FROM alpine:3.20
 
-CMD ["./main"]
+RUN apk add --no-cache ffmpeg ca-certificates && adduser -D -H bot
+COPY --from=build /circles /usr/local/bin/circles
+USER bot
+ENV PORT=8080
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s CMD wget -q -O /dev/null http://127.0.0.1:${PORT}/healthz || exit 1
+CMD ["circles"]
